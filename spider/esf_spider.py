@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import re
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import requests
 from lxml import etree
@@ -212,8 +210,7 @@ def crawl_houses(start_page: int, end_page: int, delay: float) -> list[HouseItem
     return houses
 
 
-def save_csv(items: list[HouseItem], filename: Path) -> None:
-    filename.parent.mkdir(parents=True, exist_ok=True)
+def save_csv(items: list[HouseItem], filename: str) -> None:
     field_map = {
         "title": "标题",
         "house_type": "户型",
@@ -228,7 +225,7 @@ def save_csv(items: list[HouseItem], filename: Path) -> None:
         "image_urls": "房屋图片链接",
         "detail_url": "详情链接",
     }
-    with filename.open("w", newline="", encoding="utf-8-sig") as f:
+    with open(filename, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=list(field_map.values()))
         writer.writeheader()
         for item in items:
@@ -236,19 +233,16 @@ def save_csv(items: list[HouseItem], filename: Path) -> None:
             writer.writerow({cn: row[key] for key, cn in field_map.items()})
 
 
-def save_json(items: list[HouseItem], filename: Path) -> None:
-    filename.parent.mkdir(parents=True, exist_ok=True)
-    with filename.open("w", encoding="utf-8") as f:
-        json.dump([asdict(x) for x in items], f, ensure_ascii=False, indent=2)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="采集茶竹房产二手房信息")
     parser.add_argument("--start-page", type=int, default=1, help="起始页，默认 1")
     parser.add_argument("--end-page", type=int, default=1, help="结束页，默认 1")
     parser.add_argument("--delay", type=float, default=0.8, help="请求间隔秒数，默认 0.8")
-    parser.add_argument("--output", type=Path, default=Path("output/cqyc_second_hand_houses.csv"), help="CSV 输出文件")
-    parser.add_argument("--json-output", type=Path, default=None, help="可选 JSON 输出文件")
+    parser.add_argument(
+        "--output",
+        default="cqyc_second_hand_houses.csv",
+        help="CSV 输出文件名（导出到当前 VSCode 工作区）",
+    )
     args = parser.parse_args()
 
     if args.start_page <= 0 or args.end_page <= 0 or args.start_page > args.end_page:
@@ -256,12 +250,7 @@ def main() -> None:
 
     houses = crawl_houses(start_page=args.start_page, end_page=args.end_page, delay=args.delay)
     save_csv(houses, args.output)
-    if args.json_output:
-        save_json(houses, args.json_output)
-
-    print(f"采集完成，共 {len(houses)} 条，CSV 已保存到: {args.output}")
-    if args.json_output:
-        print(f"JSON 已保存到: {args.json_output}")
+    print(f"采集完成，共 {len(houses)} 条，CSV 已保存到当前工作区: {args.output}")
 
 
 if __name__ == "__main__":

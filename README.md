@@ -22,13 +22,7 @@
 
 ```bash
 pip install -r requirements.txt
-python spider/esf_spider.py --start-page 1 --end-page 2 --output output/esf_houses.csv
+python spider/esf_spider.py --start-page 1 --end-page 2 --output esf_houses.csv
 ```
 
-同时导出 JSON：
-
-```bash
-python spider/esf_spider.py --start-page 1 --end-page 2 --output output/esf_houses.csv --json-output output/esf_houses.json
-```
-
-> 说明：脚本保留了你给定的函数结构（`getHtml/getHousehref/getHouseInfo`），在此基础上补齐字段抓取并增加翻页区间采集。
+> 说明：导出只写入当前 VSCode 工作区（当前运行目录）下的 CSV 文件。
