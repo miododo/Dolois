@@ -9,25 +9,26 @@
 - 户型（house_type）
 - 面积（area）
 - 楼层（floor）
-- 小区名称（community）
+- 小区名称（community_name）
 - 地址（address）
 - 总价（total_price）
 - 房屋编号（house_no）
 - 发布时间（publish_time）
 - 看房人数（view_count）
-- 图片链接（image_url）
+- 房屋图片链接（image_urls）
+- 详情链接（detail_url）
 
 ## 使用方式
 
 ```bash
 pip install -r requirements.txt
-python spider/esf_spider.py --pages 2 --format json --out output/esf_houses.json
+python spider/esf_spider.py --start-page 1 --end-page 2 --output output/esf_houses.csv
 ```
 
-输出也支持 CSV：
+同时导出 JSON：
 
 ```bash
-python spider/esf_spider.py --pages 2 --format csv --out output/esf_houses.csv
+python spider/esf_spider.py --start-page 1 --end-page 2 --output output/esf_houses.csv --json-output output/esf_houses.json
 ```
 
-> 说明：网页结构可能变化，`spider/esf_spider.py` 里已提供多组 XPath 兜底；若某字段为空，请按页面实际结构微调 XPath。
+> 说明：脚本保留了你给定的函数结构（`getHtml/getHousehref/getHouseInfo`），在此基础上补齐字段抓取并增加翻页区间采集。
