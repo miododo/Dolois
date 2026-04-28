@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""茶竹论坛二手房信息爬虫（基于用户给定结构补充字段与翻页）。"""
+"""茶竹论坛二手房信息爬虫（仅使用 requests）。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import time
 from dataclasses import asdict, dataclass
 
 import requests
-from lxml import etree
 
 BASE_URL = "https://fc.cqyc.net"
 LIST_URL = f"{BASE_URL}/resoldhome/esf/list"
@@ -32,8 +31,8 @@ class HouseItem:
     detail_url: str = ""
 
 
-# 发送请求，获取页面内容
-def getHtml(url: str, timeout: int = 20):
+# 发送请求，获取页面 HTML 文本
+def getHtml(url: str, timeout: int = 20) -> str:
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -44,112 +43,115 @@ def getHtml(url: str, timeout: int = 20):
     response = requests.get(url, headers=headers, timeout=timeout)
     response.raise_for_status()
     response.encoding = response.apparent_encoding
-    htmlstr = response.text
-    htmltree = etree.HTML(htmlstr)
-    return htmltree
+    return response.text
 
 
 # 安全提取单个文本
-def getOne(xpath_result, default: str = "") -> str:
-    if len(xpath_result) > 0:
-        return str(xpath_result[0]).strip()
+def getOne(values, default: str = "") -> str:
+    if values and len(values) > 0:
+        return str(values[0]).strip()
     return default
 
 
-def join_clean_text(values) -> str:
-    return " ".join(str(x).strip() for x in values if str(x).strip())
+def clean_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def regex_pick(text: str, patterns: list[str]) -> str:
     for pattern in patterns:
-        m = re.search(pattern, text)
+        m = re.search(pattern, text, flags=re.I)
         if m:
-            return m.group(0).strip()
+            return m.group(1).strip() if m.lastindex else m.group(0).strip()
     return ""
 
 
+def to_abs_url(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("//"):
+        return f"https:{url}"
+    if url.startswith("/"):
+        return f"{BASE_URL}{url}"
+    return f"{BASE_URL}/{url}"
+
+
 # 解析二手房列表页（只获取二手房的链接）
-def getHousehref(htmltree: etree._Element) -> list[str]:
-    path = '//div[@class="main-left"]/ul/li/div[1]/a[1]/@href'
-    rel_links = htmltree.xpath(path)
-    if not rel_links:
-        # 页面结构兜底
-        rel_links = htmltree.xpath("//a[contains(@href,'/resoldhome/esf/detail')]/@href")
+def getHousehref(html: str) -> list[str]:
+    patterns = [
+        r'<div class="main-left"[\s\S]*?<ul[\s\S]*?(?:href=["\']([^"\']*/resoldhome/esf/detail[^"\']*)["\'])',
+        r'href=["\']([^"\']*/resoldhome/esf/detail[^"\']*)["\']',
+    ]
 
-    abs_links: list[str] = []
-    seen = set()
-    for link in rel_links:
-        link = str(link).strip()
-        if not link:
-            continue
-        full = link if link.startswith("http") else f"{BASE_URL}{link}"
-        if full not in seen:
-            seen.add(full)
-            abs_links.append(full)
-    return abs_links
+    links: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for link in re.findall(pattern, html, flags=re.I):
+            full = to_abs_url(link)
+            if full not in seen:
+                seen.add(full)
+                links.append(full)
+        if links:
+            break
+    return links
 
 
-# 从详情页补足列表页未抓到的字段
 # 解析二手房详情页，获取房屋信息
-def getHouseInfo(htmltree: etree._Element, detail_url: str = "") -> dict:
+def getHouseInfo(html: str, detail_url: str = "") -> dict[str, str]:
     house: dict[str, str] = {}
-    all_text = join_clean_text(htmltree.xpath("//text()"))
+    text = clean_text(html)
 
-    # 获取标题
-    house["title"] = getOne(htmltree.xpath('/html/body/div[4]/div/div[3]/p/text()')) or getOne(
-        htmltree.xpath("//div[contains(@class,'title')]//p/text()")
+    house["title"] = regex_pick(
+        html,
+        [
+            r"<p[^>]*>([^<]{4,})</p>",
+            r"<h1[^>]*>([^<]+)</h1>",
+            r"<h2[^>]*>([^<]+)</h2>",
+        ],
     )
 
-    # 房屋编号
-    raw_no = getOne(htmltree.xpath("//div[@class='detail-top clearfix']/div[1]/span[1]/text()"))
-    if not raw_no:
-        raw_no = regex_pick(all_text, [r"(?:房屋编号|房源编号|编号)\s*[:：]?\s*[A-Za-z0-9_-]+"])
-    no_num = re.findall(r"([A-Za-z0-9_-]+)", raw_no)
-    house["house_no"] = no_num[-1] if no_num else ""
+    house["house_no"] = regex_pick(
+        text,
+        [
+            r"(?:房屋编号|房源编号|编号)\s*[:：]?\s*([A-Za-z0-9_-]+)",
+        ],
+    )
 
-    # 房屋图片链接
-    imgs = htmltree.xpath('//div[@class="detailImg"]//img/@src')
-    if not imgs:
-        imgs = htmltree.xpath("//img[contains(@class,'house') or contains(@class,'pic')]/@src")
-    cleaned: list[str] = []
-    for img in imgs:
-        img = str(img).split("?")[0].strip()
+    # 图片链接
+    img_candidates = re.findall(r"<img[^>]+(?:data-src|src)=[\"\']([^\"\']+)[\"\']", html, flags=re.I)
+    imgs: list[str] = []
+    for img in img_candidates:
+        img = img.split("?")[0].strip()
         if not img:
             continue
-        if not img.startswith("http"):
-            img = f"{BASE_URL}{img}" if img.startswith("/") else f"{BASE_URL}/{img}"
-        if img not in cleaned:
-            cleaned.append(img)
-    house["image_urls"] = ",".join(cleaned)
+        full = to_abs_url(img)
+        if full not in imgs:
+            imgs.append(full)
+    house["image_urls"] = ",".join(imgs)
 
-    # 发布时间
-    dt = htmltree.xpath('/html/body/div[4]/div/div[3]/div[1]/span[2]/text()')
-    dt = dt[0].split(":")[-1].strip() if len(dt) > 0 else ""
-    if not dt:
-        dt = regex_pick(all_text, [r"\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?"])
-    house["publish_time"] = dt
-
-    # 以下为补充字段
-    house["house_type"] = regex_pick(all_text, [r"\d+\s*室\s*\d*\s*厅\s*\d*\s*卫?"])
-    house["area"] = regex_pick(all_text, [r"\d+(?:\.\d+)?\s*(?:㎡|m²|平米|平方米)"])
-    house["floor"] = regex_pick(
-        all_text,
-        [r"(?:低层|中层|高层|底层|顶层|地下)\s*(?:/\s*\d+层)?", r"\d+\s*/\s*\d+\s*层", r"共\s*\d+\s*层"],
+    house["publish_time"] = regex_pick(
+        text,
+        [
+            r"(?:发布时间|发布日期|发布)\s*[:：]?\s*(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)",
+            r"(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?)",
+        ],
     )
-    house["community_name"] = getOne(htmltree.xpath("//a[contains(@href,'xiaoqu')]/text()"))
-    if not house["community_name"]:
-        house["community_name"] = regex_pick(all_text, [r"小区[:：]?\s*[^\s，,。]{2,}"])
-        house["community_name"] = re.sub(r"^小区[:：]?\s*", "", house["community_name"])
 
-    house["address"] = getOne(htmltree.xpath("//*[contains(text(),'地址')]/following-sibling::*[1]//text()"))
-    if not house["address"]:
-        house["address"] = regex_pick(all_text, [r"(?:地址|位置|所在地址)[:：]?\s*[^\n，。]{4,}"])
-        house["address"] = re.sub(r"^(?:地址|位置|所在地址)[:：]?\s*", "", house["address"])
-
-    house["total_price"] = regex_pick(all_text, [r"\d+(?:\.\d+)?\s*(?:万|万元)"])
-    house["view_count"] = regex_pick(all_text, [r"\d+\s*人看房", r"\d+\s*次浏览", r"浏览\s*\d+"])
-
+    house["house_type"] = regex_pick(text, [r"(\d+\s*室\s*\d*\s*厅\s*\d*\s*卫?)"])
+    house["area"] = regex_pick(text, [r"(\d+(?:\.\d+)?\s*(?:㎡|m²|平米|平方米))"])
+    house["floor"] = regex_pick(
+        text,
+        [r"((?:低层|中层|高层|底层|顶层|地下)\s*(?:/\s*\d+层)?)", r"(\d+\s*/\s*\d+\s*层)", r"(共\s*\d+\s*层)"],
+    )
+    house["community_name"] = regex_pick(text, [r"(?:小区名称|小区)\s*[:：]?\s*([^\s，,。]{2,})"])
+    house["address"] = regex_pick(text, [r"(?:地址|位置|所在地址)\s*[:：]?\s*([^\n，。]{4,})"])
+    house["total_price"] = regex_pick(text, [r"(\d+(?:\.\d+)?\s*(?:万|万元))"])
+    house["view_count"] = regex_pick(text, [r"(\d+\s*人看房)", r"(\d+\s*次浏览)", r"(浏览\s*\d+)"])
     house["detail_url"] = detail_url
+
     return house
 
 
@@ -182,23 +184,23 @@ def crawl_houses(start_page: int, end_page: int, delay: float) -> list[HouseItem
         url = get_page_url(page)
         print(f"正在采集第 {page} 页: {url}")
         try:
-            htmltree = getHtml(url)
+            list_html = getHtml(url)
         except requests.RequestException as exc:
             print(f"列表页请求失败: {url} ({exc})")
             continue
 
-        househreflist = getHousehref(htmltree)
-        if not househreflist:
+        links = getHousehref(list_html)
+        if not links:
             print("当前页未找到详情链接，可能到达末页或页面结构变化。")
             continue
 
-        for link in househreflist:
+        for link in links:
             if link in seen:
                 continue
             seen.add(link)
             try:
-                housetree = getHtml(link)
-                house = getHouseInfo(housetree, detail_url=link)
+                detail_html = getHtml(link)
+                house = getHouseInfo(detail_html, detail_url=link)
                 houses.append(parse_house_info(house))
             except requests.RequestException as exc:
                 print(f"详情页请求失败: {link} ({exc})")
@@ -238,11 +240,7 @@ def main() -> None:
     parser.add_argument("--start-page", type=int, default=1, help="起始页，默认 1")
     parser.add_argument("--end-page", type=int, default=1, help="结束页，默认 1")
     parser.add_argument("--delay", type=float, default=0.8, help="请求间隔秒数，默认 0.8")
-    parser.add_argument(
-        "--output",
-        default="cqyc_second_hand_houses.csv",
-        help="CSV 输出文件名（导出到当前 VSCode 工作区）",
-    )
+    parser.add_argument("--output", default="cqyc_second_hand_houses.csv", help="CSV 输出文件名（导出到当前工作区）")
     args = parser.parse_args()
 
     if args.start_page <= 0 or args.end_page <= 0 or args.start_page > args.end_page:

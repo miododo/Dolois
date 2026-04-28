@@ -1,6 +1,6 @@
 # Dolois
 
-## 茶竹论坛二手房爬虫（XPath）
+## 茶竹论坛二手房爬虫（仅 requests）
 
 爬取地址：`https://fc.cqyc.net/resoldhome/esf/list`
 
@@ -25,4 +25,4 @@ pip install -r requirements.txt
 python spider/esf_spider.py --start-page 1 --end-page 2 --output esf_houses.csv
 ```
 
-> 说明：导出只写入当前 VSCode 工作区（当前运行目录）下的 CSV 文件。
+> 说明：脚本仅依赖 `requests`，导出 CSV 到当前 VSCode 工作区（当前运行目录）。
